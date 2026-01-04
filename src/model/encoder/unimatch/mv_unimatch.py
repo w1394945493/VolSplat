@@ -54,7 +54,7 @@ class MultiViewUniMatch(nn.Module):
 
         vit_feature_channel = vit_feature_channel_dict[vit_type]
 
-        # CNN  
+        # CNN
         self.backbone = CNNEncoder(
             output_dim=feature_channels,
             num_output_scales=num_scales,
@@ -79,9 +79,27 @@ class MultiViewUniMatch(nn.Module):
 
         # monodepth
         encoder = vit_type  # can also be 'vitb' or 'vitl'
-        self.pretrained = torch.hub.load(
-            "facebookresearch/dinov2", "dinov2_{:}14".format(encoder)
-        )
+        print('vit_type:',vit_type)
+        # self.pretrained = torch.hub.load(
+        #     "facebookresearch/dinov2", "dinov2_{:}14".format(encoder)
+        # )
+        from dinov2.models.vision_transformer import vit_base
+
+        self.pretrained = vit_base(
+
+            img_size = 518,
+            patch_size = 14,
+            init_values = 1.0,
+            ffn_layer = "mlp",
+            block_chunks = 0,
+            # num_register_tokens=4, # vits14_reg4
+            num_register_tokens=0, # vits14
+            interpolate_antialias = False,
+            interpolate_offset = 0.1,
+            )
+        model_url = '/home/lianghao/wangyushen/data/wangyushen/Weights/pretrained/dinov2_vitb14_pretrain.pth'
+        state_dict = torch.load(model_url, map_location="cpu")
+        self.pretrained.load_state_dict(state_dict, strict=True)
 
         del self.pretrained.mask_token  # unused
 
@@ -434,9 +452,9 @@ class MultiViewUniMatch(nn.Module):
                 ).view(
                     -1, 1, 1, 1
                 )  # [BV, D, 1, 1]
-                
+
                 # results_dict.update({"depth_candidates": depth_candidates})
-                
+
             else:
                 # half interval each scale
                 depth_interval = (     #间隔缩小一半
@@ -526,7 +544,7 @@ class MultiViewUniMatch(nn.Module):
                 self.depth_head[scale_idx](out), dim=1
             )  # [BV, D, H, W]
             match_probs.append(match_prob)
-            
+
             ##############对深度的概率进行插值###############
             # if scale_idx == 0:
             #     pdf = F.interpolate(
@@ -554,7 +572,7 @@ class MultiViewUniMatch(nn.Module):
                     align_corners=True,
                 )
                 depth_preds.append(depth_bilinear)
-                
+
 
             # final output, learned upsampler
             if scale_idx == self.num_scales - 1:
@@ -577,7 +595,7 @@ class MultiViewUniMatch(nn.Module):
                 depth = (depth_bilinear + residual_depth).clamp(
                     min=min_depth.view(-1, 1, 1, 1), max=max_depth.view(-1, 1, 1, 1)
                 )
-               
+
 
                 depth_preds.append(depth)
 

@@ -1,4 +1,10 @@
+# 设置进程名
+from setproctitle import setproctitle
+setproctitle("wys")
+
+
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from pathlib import Path
 import warnings
 import copy
@@ -16,7 +22,7 @@ import numpy as np
 
 import sys
 # Exclude conflicting paths
-sys.path = [p for p in sys.path if "/mnt/data-3/users/nichaojun/.local" not in p]
+# sys.path = [p for p in sys.path if "/mnt/data-3/users/nichaojun/.local" not in p]
 
 
 from pytorch_lightning import Trainer
@@ -32,7 +38,7 @@ from typing import Any, Dict, Optional
 from pytorch_lightning.loggers.wandb import WandbLogger
 
 from pytorch_lightning.plugins.environments import LightningEnvironment
-from pytorch_lightning.strategies import DDPStrategy  
+from pytorch_lightning.strategies import DDPStrategy
 
 # Configure beartype and jaxtyping.
 with install_import_hook(
@@ -264,19 +270,19 @@ def train(cfg_dict: DictConfig):
                     f"Loaded pretrained monodepth (partial freezing): {cfg.checkpointing.pretrained_monodepth}"
                 )
             )
-        
+
         # load pretrained mvdepth
         if cfg.checkpointing.pretrained_mvdepth is not None:
             pretrained_model = torch.load(cfg.checkpointing.pretrained_mvdepth, map_location='cpu')['model']
 
             load_result =  model_wrapper.encoder.depth_predictor.load_state_dict(pretrained_model, strict=False)
-            
+
             print(
                 cyan(
                     f"Loaded pretrained mvdepth: {cfg.checkpointing.pretrained_mvdepth}"
                 )
             )
-        
+
         # load full model
         if cfg.checkpointing.pretrained_model is not None:
             strict_load = False
@@ -293,21 +299,21 @@ def train(cfg_dict: DictConfig):
 
         # load pretrained depth
         if cfg.checkpointing.pretrained_depth is not None:
-            
+
             strict_load = False
             pretrained_model = torch.load(cfg.checkpointing.pretrained_depth, map_location='cpu')
             if 'state_dict' in pretrained_model:
                 pretrained_model = pretrained_model['state_dict']
-            
-        
+
+
             load_result  = model_wrapper.encoder.depth_predictor.load_state_dict(pretrained_model, strict=strict_load)
-            
+
             print(
                 cyan(
                     f"Loaded pretrained depth: {cfg.checkpointing.pretrained_depth}"
                 )
             )
-            
+
         trainer.fit(model_wrapper, datamodule=data_module, ckpt_path=checkpoint_path)
     else:
         # load full model
@@ -336,7 +342,7 @@ def train(cfg_dict: DictConfig):
                     f"Loaded pretrained depth: {cfg.checkpointing.pretrained_depth}"
                 )
             )
-            
+
         trainer.test(
             model_wrapper,
             datamodule=data_module,
