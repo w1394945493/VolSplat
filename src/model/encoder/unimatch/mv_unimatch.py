@@ -237,7 +237,7 @@ class MultiViewUniMatch(nn.Module):
         b, v = images.shape[:2]
         concat = rearrange(images, "b v c h w -> (b v) c h w")
         # list of [BV, C, H, W], resolution from high to low
-        features = self.backbone(concat)
+        features = self.backbone(concat) # (6, 64, 128, 128), (6, 96, 128, 128), (6, 128, 64, 64)
         # reverse: resolution from low to high
         features = features[::-1]
 
@@ -261,7 +261,7 @@ class MultiViewUniMatch(nn.Module):
         match_probs = []
 
         # first normalize images
-        images = self.normalize_images(images)
+        images = self.normalize_images(images) # mean,std
         b, v, _, ori_h, ori_w = images.shape
 
         # update the num_views in unet attention, useful for random input views
@@ -346,25 +346,25 @@ class MultiViewUniMatch(nn.Module):
                 .reshape(concat.shape[0], resize_h // 14, resize_w // 14, -1)
                 .permute(0, 3, 1, 2)
                 .contiguous()
-            )
+            ) # todo curr_features: (v 768 18 18)
             # resize to 1/8 resolution
             curr_features = F.interpolate(
                 curr_features,
                 (ori_h // 8, ori_w // 8),
                 mode="bilinear",
                 align_corners=True,
-            )
+            ) # todo curr_features: (v 768 32 32)
             mono_intermediate_features[i] = curr_features
 
         results_dict.update({"features_mono_intermediate": mono_intermediate_features})
 
         # last mono feature
-        mono_features = mono_intermediate_features[-1]
+        mono_features = mono_intermediate_features[-1] # todo (v 768 32 32)
 
         if self.lowest_feature_resolution == 4:
             mono_features = F.interpolate(
                 mono_features, scale_factor=2, mode="bilinear", align_corners=True
-            )
+            ) # todo (v 768 64 64)
 
         if self.num_scales > 1:
             # multi-scale mono features, resolution from low to high
@@ -606,8 +606,8 @@ class MultiViewUniMatch(nn.Module):
                 depth_pred, "(b v) ... -> b v ...", b=b, v=v
             )  # [B, V, H, W]
 
-        results_dict.update({"depth_preds": depth_preds})
-        results_dict.update({"match_probs": match_probs})
+        results_dict.update({"depth_preds": depth_preds}) # todo list[(b v 256 256)]
+        results_dict.update({"match_probs": match_probs}) # todo list[(v 128 64 64),(v 32 128 128)]
 
         return results_dict
 

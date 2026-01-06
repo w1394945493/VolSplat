@@ -120,7 +120,7 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
                                         num_scales=cfg.num_scales,
                                         )
         feature_upsampler_channels = model_configs[cfg.monodepth_vit_type]["features"]
-        
+
         # gaussians adapter
         self.gaussian_adapter = GaussianAdapter_depth(cfg.gaussian_adapter)
 
@@ -137,7 +137,7 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
 
         self.gaussian_regressor = nn.Sequential(*modules)
 
-        num_gaussian_parameters = self.gaussian_adapter.d_in + 3 + 1 
+        num_gaussian_parameters = self.gaussian_adapter.d_in + 3 + 1
 
         # concat(img, features, regressor_out, match_prob)
         in_channels = 3 + feature_upsampler_channels + channels + 1
@@ -152,10 +152,10 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
 
         # Create Gaussian head
         self.gaussian_head = SparseGaussianHead(in_channels, num_gaussian_parameters)
-        
+
 
     def _sparse_to_batched(self, features, coordinates, batch_size, return_mask=False):
-       
+
         device = features.device
         _, c = features.shape
 
@@ -196,8 +196,10 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
         scene_names: Optional[list] = None,
         ues_voxelnet: bool = True,
     ):
+        # todo ---------------------------------------------------------------#
+        # todo 见论文 3(B).1) Feature Extraction and Feature Matching 特征提取与特征匹配
         device = context["image"].device
-        b, v, _, h, w = context["image"].shape
+        b, v, _, h, w = context["image"].shape # h=256 w=256
 
         if v > 3:
             with torch.no_grad():
@@ -211,24 +213,21 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
 
 
         results_dict = self.depth_predictor(
-            context["image"],
+            context["image"], # (b v c h w)
             attn_splits_list=[2],
-            min_depth=1. / context["far"],
-            max_depth=1. / context["near"],
-            intrinsics=context["intrinsics"],
-            extrinsics=context["extrinsics"],
+            min_depth=1. / context["far"], # far: 100.
+            max_depth=1. / context["near"], # near: 0.5
+            intrinsics=context["intrinsics"], # 归一化的相机内参 (b v 3 3)
+            extrinsics=context["extrinsics"], # (b v 4 4)
             nn_matrix=cameras_dist_index,
         )
 
         # list of [B, V, H, W], with all the intermediate depths
         depth_preds = results_dict['depth_preds']
-        
         depth = depth_preds[-1]
 
         voxel_resolution = self.cfg.voxel_resolution
-        
-        
-        
+
         if self.cfg.train_depth_only:
             # convert format
             # [B, V, H*W, 1, 1]
@@ -265,15 +264,15 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
                                           mv_features=results_dict["features_mv"][
                                           0] if self.cfg.num_scales == 1 else results_dict["features_mv"][::-1]
                                           )
-        
+
         # [BV, D, H, W] in feature resolution
         match_prob = results_dict['match_probs'][-1]
         match_prob = torch.max(match_prob, dim=1, keepdim=True)[
             0]  # [BV, 1, H, W]
         match_prob = F.interpolate(
             match_prob, size=depth.shape[-2:], mode='nearest')
-        
-        
+
+
         # unet input [BV, C, H, W]  [6, 101, 256, 448]
         concat = torch.cat((
             rearrange(context["image"], "b v c h w -> (b v) c h w"),
@@ -288,23 +287,30 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
                             "b v c h w -> (b v) c h w"),
                     features,
                     match_prob]
-        # [BV, C, H, W]   [6, 164, 256, 448]    
-        out = torch.cat(concat, dim=1) 
-  
+        # [BV, C, H, W]   [6, 164, 256, 448]
+        out = torch.cat(concat, dim=1)
+
+        # todo ---------------------------------------------------------------#
+        # todo 见论文 3(B).2) Lifting to 3D Feature 部分：将2D的像素特征转换为稀疏的3D点云特征
+        #?--------------------------------------------------------------------#
+        #? 重点：将像素特征变换为体素特征(使用MinkowskiEngine)
+        #? 学习借鉴一下，看该模块能否接在其他工作的后面 -> 来得到体素高斯表示
         sparse_input, aggregated_points, counts = project_features_to_me(
                 context["intrinsics"],
                 context["extrinsics"],
                 out,
-                depth=depth, 
+                depth=depth,
                 voxel_resolution=voxel_resolution,
                 b=b, v=v
                 )
-
+        # todo ---------------------------------------------------------------#
+        # todo 见论文 3(C).1) Feature Refinement 部分：特征细化
+        # todo 使用3D U-Net网络，对输入的体素网格(sparse_input) 预测得到残差体素场(输出仍然是ME稀疏点云特征的形式)
         sparse_out = self.spare_unet(sparse_input)   # 3D Sparse UNet
-      
-        if torch.equal(sparse_out.C, sparse_input.C) and sparse_out.F.shape[1] == sparse_input.F.shape[1]:
+
+        if torch.equal(sparse_out.C, sparse_input.C) and sparse_out.F.shape[1] == sparse_input.F.shape[1]: # todo sparse_out.C: (N,4) 4(batch_indices,x,y,z)
             # Create new feature tensor
-            new_features = sparse_out.F + sparse_input.F
+            new_features = sparse_out.F + sparse_input.F # todo 见论文 3(C).1) Feature Refinement 的 公式(8)
 
             sparse_out_with_residual = ME.SparseTensor(
                 features=new_features,
@@ -315,11 +321,12 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
             # Handle coordinate mismatch
             print("Warning: Input and output coordinates inconsistent, skipping residual connection")
             sparse_out_with_residual = sparse_out
-
+        # todo ---------------------------------------------------------------#
+        # todo 见论文 3(C).2) Gaussian Prediction 高斯预测部分
         gaussians = self.gaussian_head(sparse_out_with_residual)
 
-        del sparse_out_with_residual,sparse_out,sparse_input,new_features
-        
+        del sparse_out_with_residual,sparse_out,sparse_input,new_features # todo 立即释放显存，若不写del 中间变量一直存储于当前作用域，直到函数执行完毕
+
         # [B, V, H*W, 1, 1]
         depths = rearrange(depth, "b v h w -> b v (h w) () ()")
 
@@ -347,7 +354,7 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
                 intrinsics = context["intrinsics"],
                 opacities = opacities,
                 raw_gaussians = rearrange(raw_gaussians,"b v r srf c -> b v r srf () c"),
-                input_images =rearrange(context["image"], "b v c h w -> (b v) c h w"),   
+                input_images =rearrange(context["image"], "b v c h w -> (b v) c h w"),
                 depth = depth,
                 coordidate = gaussians.C,
                 points = batched_points,
@@ -357,7 +364,7 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
             import traceback; traceback.print_exc()
             raise
 
-        
+
 
         if self.cfg.supervise_intermediate_depth and len(depth_preds) > 1:
             intermediate_depth = depth_preds[0]
@@ -370,7 +377,7 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
                 voxel_resolution=voxel_resolution,
                 b=b, v=v
                 )
-      
+
             intermediate_out = self.spare_unet(intermediate_voxel_feature)   # 3D Sparse UNet
             # refine with residual
             if torch.equal(intermediate_out.C, intermediate_voxel_feature.C) and intermediate_out.F.shape[1] == intermediate_voxel_feature.F.shape[1]:
@@ -420,36 +427,36 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
                 intrinsics = context["intrinsics"],
                 opacities = intermediate_opacities,
                 raw_gaussians = rearrange(intermediate_raw_gaussians,"b v r srf c -> b v r srf () c"),
-                input_images =rearrange(context["image"], "b v c h w -> (b v) c h w"),  
+                input_images =rearrange(context["image"], "b v c h w -> (b v) c h w"),
                 depth = intermediate_depth,
                 coordidate = intermediate_gaussians.C,
                 points = batched_median_points,
                 voxel_resolution = voxel_resolution
             )
-        
+
             intermediate_gaussians = Gaussians(
                 rearrange(
-                    intermediate_gaussians.means,   
-                    "b v r srf spp xyz -> b (v r srf spp) xyz",   
+                    intermediate_gaussians.means,
+                    "b v r srf spp xyz -> b (v r srf spp) xyz",
                 ),
                 rearrange(
-                    intermediate_gaussians.covariances,  
-                    "b v r srf spp i j -> b (v r srf spp) i j", 
+                    intermediate_gaussians.covariances,
+                    "b v r srf spp i j -> b (v r srf spp) i j",
                 ),
                 rearrange(
-                    intermediate_gaussians.harmonics, 
-                    "b v r srf spp c d_sh -> b (v r srf spp) c d_sh",  
+                    intermediate_gaussians.harmonics,
+                    "b v r srf spp c d_sh -> b (v r srf spp) c d_sh",
                 ),
                 rearrange(
-                    intermediate_gaussians.opacities,  
-                    "b v r srf spp -> b (v r srf spp)",  
+                    intermediate_gaussians.opacities,
+                    "b v r srf spp -> b (v r srf spp)",
                 ),
             )
         else:
             intermediate_gaussians = None
 
 
-        
+
         gaussians = Gaussians(
             rearrange(
                 gaussians.means,   #[2, 1, 256000, 1, 1, 3]
@@ -469,13 +476,13 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
             ),
         )
 
-        if self.cfg.return_depth:
+        if self.cfg.return_depth: # todo True
             # return depth prediction for supervision
             # depths  = torch.cat(depth_preds, dim=0)
             depths = rearrange(
                 depths, "b v (h w) srf s -> b v h w srf s", h=h, w=w
             ).squeeze(-1).squeeze(-1)
-            
+
             # print(depths.shape)  # [B, V, H, W]  [2, 6, 256, 448]
             if intermediate_gaussians is not None:
                 return {
@@ -510,7 +517,7 @@ class EncoderVolSplat(Encoder[EncoderVolSplatCfg]):
 
 
 
-    
-    
-    
-    
+
+
+
+

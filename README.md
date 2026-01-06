@@ -88,7 +88,7 @@ Our pre-trained models and baseline models are hosted on [Hugging Face](https://
 
 ### RealEstate10K / ACID
 
-Please refer to [ZPressor](https://github.com/ziplab/ZPressor?tab=readme-ov-file#datasets) for dataset format and preprocessed versions of the datasets. 
+Please refer to [ZPressor](https://github.com/ziplab/ZPressor?tab=readme-ov-file#datasets) for dataset format and preprocessed versions of the datasets.
 
 ### Scannet
 

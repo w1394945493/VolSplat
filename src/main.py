@@ -4,7 +4,7 @@ setproctitle("wys")
 
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 from pathlib import Path
 import warnings
 import copy
@@ -23,7 +23,7 @@ import numpy as np
 import sys
 # Exclude conflicting paths
 # sys.path = [p for p in sys.path if "/mnt/data-3/users/nichaojun/.local" not in p]
-
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # 获取当前python文件所作目录的上两级目录的绝对路径
 
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import (

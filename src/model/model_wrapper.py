@@ -173,18 +173,18 @@ class ModelWrapper(LightningModule):
         _, views, _, _, _ = batch["context"]["image"].shape
 
         print(f"Training step{self.global_step},Number of images:{views}:scene IDs:{batch['scene']}")
-        
-        # Run the model.                 
+
+        # Run the model.
         gaussians = self.encoder(
             batch["context"], self.global_step, False, scene_names=batch["scene"]
         )
-        
-        
+
+
         if isinstance(gaussians, dict) and len(gaussians) == 2:
             supervise_intermediate_depth = False
             pred_depths = gaussians["depths"]
             gaussians = gaussians["gaussians"]
-        
+
         if isinstance(gaussians, dict) and len(gaussians) == 3:
             supervise_intermediate_depth = True
             pred_depths = gaussians["depths"]
@@ -217,8 +217,8 @@ class ModelWrapper(LightningModule):
                 (h, w),
                 depth_mode=self.train_cfg.depth_mode,
             )
-        
-            
+
+
             # split
             batch_size = batch["target"]["extrinsics"].size(0)
             # order: intermediate depth, final depth
@@ -259,7 +259,7 @@ class ModelWrapper(LightningModule):
                     (h, w),
                     depth_mode=self.train_cfg.depth_mode,
                 )
-        
+
         # print_mem("after decoder")
 
         target_gt = batch["target"]["image"]
@@ -269,7 +269,7 @@ class ModelWrapper(LightningModule):
             rearrange(target_gt, "b v c h w -> (b v) c h w"),
             rearrange(output.color, "b v c h w -> (b v) c h w"),
         )
-        
+
         self.log("train/psnr", psnr_probabilistic.mean())
 
         # Compute and log loss.
@@ -411,7 +411,7 @@ class ModelWrapper(LightningModule):
             inference_start_time = time.time()
             encoder_start_time = None
             decoder_start_time = None
-        
+
 
         pred_depths = None
 
@@ -421,7 +421,7 @@ class ModelWrapper(LightningModule):
             self.test_cfg.output_path = os.path.join(get_cfg()["output_dir"], "metrics")
             path = Path(get_cfg()["output_dir"])
 
-            input_images = batch["context"]["image"][0]  # [V, 3, H, W]
+            input_images = batch["context"]["image"][0]  # [V, 3, H, W] batch["context"]["image"]: [b v 3 h w]
             index = batch["context"]["index"][0]
             for idx, color in zip(index, input_images):
                 save_image(color, path / "images" / scene / f"color/input_{idx:0>6}.png")
@@ -438,7 +438,7 @@ class ModelWrapper(LightningModule):
             if self.test_cfg.compute_scores and torch.cuda.is_available():
                 mem_before_encoder = torch.cuda.memory_allocated()
                 encoder_start_time = time.time()
-
+            # todo -------------------------------------#
             gaussians = self.encoder(
                 batch["context"],
                 self.global_step,
